@@ -1,0 +1,21 @@
+## Interface: 30000
+## Title: ShadowGreenLight
+## Notes: Provides a simple display of when is the optimal cast time for SW:P considering the crit / shadowweaving bug
+## Author: Mokhtar
+## SavedVariables: ShadowGreenLightDB, ShadowGreenLight_DefaultDisplayDB, ShadowGreenLight_DisplayBarDB
+## OptionalDeps: LibStub, LibQTip-1.0, Ace3, LibTalentQuery-1.0, LibGroupTalents-1.0, LibBabble-Zone-3.0
+## X-Curse-Packaged-Version: v1.7.2
+## X-Curse-Project-Name: ShadowGreenLight
+## X-Curse-Project-ID: shadowgreenlight
+## X-Curse-Repository-ID: wow/shadowgreenlight/mainline
+
+
+#@no-lib-strip@
+embeds.xml
+#@end-no-lib-strip@
+
+Core.lua
+Database.lua
+Options.lua
+Display.lua
+DisplayBar.lua
