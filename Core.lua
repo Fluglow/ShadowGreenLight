@@ -7,10 +7,12 @@ local _UPDATEDISPLAY_RATE = 0.2
 local _CHECKSOUNDALERT_RATE = 5
 local SPELL_SWP = GetSpellInfo(589)
 local SPELL_CORRUPTION = GetSpellInfo(172)
+local SPELL_SERPENT_STING = GetSpellInfo(1978)
 local SPELL_GLYPH_QUICK_DECAY = GetSpellInfo(70947)
 local TALENT_DEATH_EMBRACE = GetSpellInfo(47198)
 local TALENT_PAIN_AND_SUFFERING = GetSpellInfo(47580)
 local TALENT_EVERLASTING_AFFLICTION = GetSpellInfo(47201)
+local TALENT_CHIMERA_SHOT = GetSpellInfo(53209)
 local DEATH_EMBRACE_MULTIPLIER = 4
 local CR_HASTE_SPELL = CR_HASTE_SPELL or 20
 local DPS_COMPUTATION_WINDOW_LENGTH = 10
@@ -31,6 +33,7 @@ function ShadowGreenLight:OnInitialize()
   	self.maxUpgrade = 0
 	self.currentUpgrade = 0
 	self.lastDotUpgrade = {}
+	self.LastDotBaseCritPct = {}
 	self.lastDotSpellPower = {}
 	self.critPctWithoutRaidBuffs = 0
 	self.upgradeList = {}
@@ -48,6 +51,8 @@ function ShadowGreenLight:OnInitialize()
 	self.lastDotTick = 0
 	self.soundAlert = false
 	self.class = ""
+	
+	self.lastSpellTarget = ""
   	
   	-- Initialization of session db
   	self.db = LibStub("AceDB-3.0"):New("ShadowGreenLightDB", {
@@ -98,7 +103,7 @@ end
 function ShadowGreenLight:OnEnteringWorld()
 	local _, class = UnitClass("player")
 	self.class = class
-	if class == "PRIEST" or class=="WARLOCK" then
+	if class == "PRIEST" or class=="WARLOCK" or class=="HUNTER" then
 		-- Registering events to enter/exit combat
 		self:RegisterEvent("PLAYER_REGEN_DISABLED", "EnteringCombat")
 		self:RegisterEvent("PLAYER_REGEN_ENABLED", "ExitingCombat")
@@ -107,6 +112,8 @@ function ShadowGreenLight:OnEnteringWorld()
 		-- sets the spell to follow depending on class
 		if class == "PRIEST" then
 			self.affectedDot = SPELL_SWP
+		elseif class == "HUNTER" then
+			self.affectedDot = SPELL_SERPENT_STING
 		else
 			self.affectedDot = SPELL_CORRUPTION
 		end
@@ -140,7 +147,6 @@ end
 function ShadowGreenLight:CreateDisplay()
 	local display = self.registeredDisplays[self.db.profile.selectedDisplay]
 	--if not display then display = self.registeredDisplays["Default"] end
-	
 	display:CreateDisplay()
 end
 
@@ -179,6 +185,7 @@ function ShadowGreenLight:EnteringCombat()
 	
 	self:RegisterEvent("PLAYER_TARGET_CHANGED", "TargetChanged")
 	self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "handleSpellcast")
+	self:RegisterEvent("UNIT_SPELLCAST_SENT", "handleSpellCastAttempt")
 	self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", "handleCombatLogEvent")
 	self.updateDisplayTimer = self:ScheduleRepeatingTimer("UpdateSelectedDisplay", _UPDATEDISPLAY_RATE)
 	self.checkSoundAlertTimer = self:ScheduleRepeatingTimer("CheckSoundAlert", _CHECKSOUNDALERT_RATE)
@@ -215,13 +222,14 @@ end
 function ShadowGreenLight:ExitingCombat()
 	self:UnregisterEvent("PLAYER_TARGET_CHANGED")
 	self:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+	self:UnregisterEvent("UNIT_SPELLCAST_SENT")
 	self:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 	self:CancelTimer(self.updateDisplayTimer)
 	self.updateDisplayTimer = nil
 	self:CancelTimer(self.checkSoundAlertTimer)
 	self.checkSoundAlertTimer = nil
-	self.lastDotUpgrade = {}
-	self.lastDotSpellPower = {}
+	--self.lastDotUpgrade = {}
+	--self.lastDotSpellPower = {} Don't clear data as feign death can be used during fight
 	
 	local display = self.registeredDisplays[self.db.profile.selectedDisplay]
 	display:UpdateDisplay_OnExitingCombat()
@@ -250,17 +258,26 @@ end
 --------------------------------------------------
 -- Detecting SW:P application
 function ShadowGreenLight:handleSpellcast(event, unit, spellName, ...)
-    if unit == "player" and spellName == self.affectedDot then
+    if unit == "player" and spellName == self.affectedDot and UnitName("target") == self.lastSpellTarget then
     	local unitGUID = UnitGUID("target")
+		self.LastDotBaseCritPct[unitGUID] = self:ComputeCritPctWithoutRaidBuffs()
         self.lastDotUpgrade[unitGUID] = self:ComputeCurrentUpgrade()
-        self.lastDotSpellPower[unitGUID] = GetSpellBonusDamage(6) 
+        self.lastDotSpellPower[unitGUID] = GetSpellBonusDamage(6)
+    end
+end
+
+--Detect what the last cast attempt's target was.
+--Mouseover casts are still handled incorrectly when multiple units with the same name are involved.
+--Upgrade is not computed correctly for mouseover targets, but this fixes fixes main target's corruption being overridden.
+function ShadowGreenLight:handleSpellCastAttempt(event, unit, spellName, spellRank, target)
+    if unit == "player" and spellName == self.affectedDot then
+		self.lastSpellTarget = target
     end
 end
 
 --------------------------------------------------
 -- Logging dmg events
 function ShadowGreenLight:handleCombatLogEvent(event, timeStamp, eventType, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, ...)
-	
     if srcName == UnitName("player") and dstName == UnitName("target") then
 		local prefix, suffix, special = strsplit("_", eventType)
 		if suffix == "DAMAGE" or special=="DAMAGE" then
@@ -305,9 +322,16 @@ function ShadowGreenLight:handleCombatLogEvent(event, timeStamp, eventType, srcG
 				if critical then
 					self.lastDotTick = self.lastDotTick / 2
 				end
-				self.lastDotTick = self.lastDotTick * (1+GetSpellCritChance(6)/100)
+				self.lastDotTick = self.lastDotTick * (1+self:GetCritChance()/100)
 			end
 	    end
+		if suffix == "AURA" and special == "REMOVED" then
+			local _, spellName, _, dmg, _, _ = ...
+			if spellName == self.affectedDot then
+				self.lastDotUpgrade[dstGUID] = None
+				self.LastDotBaseCritPct[dstGUID] = None
+			end
+		end
 	end
 end
 
@@ -359,7 +383,10 @@ function ShadowGreenLight:LibGroupTalents_Update(_, _, unit)
 		elseif self.class == "PRIEST" then
 			-- detect if priest currently shadow specced
 			local investment = LGT:UnitHasTalent(unit, TALENT_PAIN_AND_SUFFERING) or 0
-			self.isDisplayed = (investment > 0) 
+			self.isDisplayed = (investment > 0)
+		elseif self.class == "HUNTER" then
+			local investment = LGT:UnitHasTalent(unit, TALENT_CHIMERA_SHOT) or 0
+			self.isDisplayed = (investment > 0)
 		end
 		if self.isDisplayed then
 			self:SelectedDisplaySetShown(true)
@@ -377,6 +404,8 @@ function ShadowGreenLight:ComputeCurrentUpgrade()
 		["crit"]={},
 		["dmg"]={},
 	}
+	self:ComputeCritPctWithoutRaidBuffs()
+	
 	local isBonus = false
 	
 	-- Reset current stack count in upgrade list for tooltip
@@ -414,35 +443,37 @@ function ShadowGreenLight:ComputeCurrentUpgrade()
 				-- Si la personne qui donne le buff n'est pas importante ou si le caster correspond à un provider potentiel
 				if not upgradeBuff.providerIsSignificant or self.buffProviders[upgradeBuff.name][UnitName(caster)] then
 					if not upgradeBuff.hasToBeStackable or (upgradeBuff.hasToBeStackable and auraCount ~= 0) then
-					    if auraCount == 0 then
-					    	auraCount = 1
-						end -- apparently if buff does not stack UnitBuff returns 0
-																			-- Due to master poisoner we have to check if the stack number is significant
-						local upgradeAmount = upgradeBuff.upgradePerStack * ((auraCount>upgradeBuff.maxCount and upgradeBuff.maxCount) or auraCount)
-						
-						if not currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] then
-							currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = 0
-						end
-						if upgradeBuff.multipleAuraInstanceStack then	-- If multiple aura instances stacks
-							if upgradeBuff.upgradeType == "crit" then		-- crits stack additively
-								currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] + upgradeAmount
-							else	-- dmg stack multiplicatively
-								-- (1+A/100)*(1+B/100) = (1+C/100) => C = A+B+AB/100
-								currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] + upgradeAmount + currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] * upgradeAmount / 100
+						if self:UpgradeCanBeApplied(upgradeBuff) then
+							if auraCount == 0 then
+								auraCount = 1
+							end -- apparently if buff does not stack UnitBuff returns 0
+								-- Due to master poisoner we have to check if the stack number is significant
+							local upgradeAmount = upgradeBuff.upgradePerStack * ((auraCount>upgradeBuff.maxCount and upgradeBuff.maxCount) or auraCount)
+							if not currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] then
+								currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = 0
 							end
-						else
-							-- Check if need updating (non stackable)
-							if upgradeAmount > currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] then
-								currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = upgradeAmount
+							if upgradeBuff.multipleAuraInstanceStack then	-- If multiple aura instances stacks
+								if upgradeBuff.upgradeType == "crit" then		-- crits stack additively
+									currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] + upgradeAmount
+								else	-- dmg stack multiplicatively
+									-- (1+A/100)*(1+B/100) = (1+C/100) => C = A+B+AB/100
+									currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] + upgradeAmount + currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] * upgradeAmount / 100
+								end
+							else
+								-- Check if need updating (non stackable)
+								if upgradeAmount > currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] or
+										(upgradeAmount < 0 and upgradeAmount < currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type]) then
+									currentUpgradeList[upgradeBuff.upgradeType][upgradeBuff.type] = upgradeAmount
+								end
 							end
-						end
-						-- Update tooltip
-						if not upgradeBuff.isBonus then
-							self.currentTooltipUpgradeList[upgradeBuff.type][upgradeBuff.name].currentStack = auraCount
-						end
-						-- set the bonus flag
-						if upgradeBuff.isBonus then
-							isBonus = true
+							-- Update tooltip
+							if not upgradeBuff.isBonus then
+								self.currentTooltipUpgradeList[upgradeBuff.type][upgradeBuff.name].currentStack = auraCount
+							end
+							-- set the bonus flag
+							if upgradeBuff.isBonus then
+								isBonus = true
+							end
 						end
 					end
 				end
@@ -453,6 +484,13 @@ function ShadowGreenLight:ComputeCurrentUpgrade()
 	end
 	
 	local currentCritFactor = 0
+	targetGUID = UnitGUID("target") 
+	-- A somewhat questionable way to show crit rating in currentUpgrade.
+	-- Mainly for showing difference between a crit prewep cast and a fresh one.
+	if self:GetLastDotBaseCritPct(targetGUID) then
+		currentCritFactor = self.critPctWithoutRaidBuffs-self:GetLastDotBaseCritPct(targetGUID) 
+	end
+	
 	for Type, upgradeAmount in pairs(currentUpgradeList["crit"]) do
 	   currentCritFactor = currentCritFactor + upgradeAmount
 	end
@@ -461,10 +499,14 @@ function ShadowGreenLight:ComputeCurrentUpgrade()
 	for Type, upgradeAmount in pairs(currentUpgradeList["dmg"]) do
 	   currentDmgFactor = currentDmgFactor * (1 + upgradeAmount/100)
 	end
+
+	if self.class == "HUNTER" and not self:HunterHasTier9() then
+		currentCritFactor = 0
+	end
+
+	local currentUpgrade = ((1+currentCritFactor/100/(1+self.critPctWithoutRaidBuffs/100))*currentDmgFactor - 1)*100
 	
-	local currentUpgrade = ((1+currentCritFactor/100/(1+self.critPctWithoutRaidBuffs/100))*currentDmgFactor - 1)*100  
-    
-   self.currentUpgrade = currentUpgrade
+	self.currentUpgrade = currentUpgrade
 	return currentUpgrade, isBonus
 end
 
@@ -482,15 +524,15 @@ function ShadowGreenLight:PopulateUpgradeList()
 		end
 		self.buffProviders[buffName] = nil
 	end
-	
-	
+
 	-- Add upgrades that are not dependants on raid talents and are applicable
 	for upgradeName, upgrade in pairs(self.upgradeDb) do
 	   local applicable = true
-	   if upgrade.isApplicable then
-	        applicable = upgrade.isApplicable(unpack(upgrade.applicabilityArgs))
-	   end
-		if (not upgrade.talentName) and applicable then
+	    if upgrade.isApplicable then
+			applicable = upgrade.isApplicable(unpack(upgrade.applicabilityArgs))
+	    end
+
+		if (not upgrade.talentName) and applicable and self:UpgradeCanBeApplied(upgrade) then
 		   self.upgradeList[upgradeName] = upgrade
 		end
 	end
@@ -540,21 +582,23 @@ function ShadowGreenLight:PopulateUpgradeListForUnit(unit)
 	local name = getRealmedName(unit)
 	if self.raidUpgradeAvailable[name] then
 		for upgradeName, upgrade in pairs(self.raidUpgradeAvailable[name]) do
-			-- either buff was not available before
-			if not self.upgradeList[upgradeName] then
-				self.upgradeList[upgradeName] = upgrade
-			-- or it was, in that case check if new upgrade is better
-			else
-				if self.upgradeList[upgradeName].upgradePerStack < upgrade.upgradePerStack then
+			if self:UpgradeCanBeApplied(upgrade) then
+				-- either buff was not available before
+				if not self.upgradeList[upgradeName] then
 					self.upgradeList[upgradeName] = upgrade
+					-- or it was, in that case check if new upgrade is better
+				else
+					if self.upgradeList[upgradeName].upgradePerStack < upgrade.upgradePerStack then
+						self.upgradeList[upgradeName] = upgrade
+					end
 				end
-			end
-			-- populate the provider list if needed
-			if upgrade.providerIsSignificant then
-				if not self.buffProviders[upgrade.name] then
-					self.buffProviders[upgrade.name] = {}
+				-- populate the provider list if needed
+				if upgrade.providerIsSignificant then
+					if not self.buffProviders[upgrade.name] then
+						self.buffProviders[upgrade.name] = {}
+					end
+					self.buffProviders[upgrade.name][name] = true
 				end
-				self.buffProviders[upgrade.name][name] = true
 			end
 		end
 	end
@@ -565,6 +609,9 @@ function ShadowGreenLight:ComputeMaxUpgrade()
 		["crit"]={},
 		["dmg"]={},
 	}
+
+	self:ComputeCritPctWithoutRaidBuffs()
+
 	self.maxUpgrade = 0
 	for _, upgradeBuff in pairs(self.upgradeList) do
 		if not upgradeBuff.isBonus then	-- skip bonus buffs for maxupgrade computation
@@ -596,8 +643,12 @@ end
 
 function ShadowGreenLight:ComputeCritPctWithoutRaidBuffs()
 	local maxCritUpgradeByUpgradeType = {}
-	self.critPctWithoutRaidBuffs = GetSpellCritChance(6)
-		
+	self.critPctWithoutRaidBuffs = self:GetCritChance()
+
+	if self.affectedDot == SPELL_SERPENT_STING and not self:HunterHasTier9() then
+		return self.critPctWithoutRaidBuffs
+	end
+
 	-- Scan upgrade list
 	for _, upgradeBuff in pairs(self.upgradeList) do
 		-- only keep self crit buffs
@@ -607,10 +658,10 @@ function ShadowGreenLight:ComputeCritPctWithoutRaidBuffs()
 			local auraName, _, _, auraCount = UnitBuff("player", index)
 			while auraName do
 				if upgradeBuff.name == auraName then
-				   if auraCount == 0 then auraCount = 1 end -- apparently if buff does not stack UnitBuff returns 0
+					if auraCount == 0 then auraCount = 1 end -- apparently if buff does not stack UnitBuff returns 0
 					if not maxCritUpgradeByUpgradeType[upgradeBuff.type] then
 						maxCritUpgradeByUpgradeType[upgradeBuff.type] = 0
-					end				
+					end
 					local upgradeAmount = upgradeBuff.upgradePerStack * auraCount
 					-- Check if need updating
 					if upgradeAmount > maxCritUpgradeByUpgradeType[upgradeBuff.type] then
@@ -622,18 +673,18 @@ function ShadowGreenLight:ComputeCritPctWithoutRaidBuffs()
 			end
 		end
 	end
-	
+
 	for _, upgradeAmount in pairs(maxCritUpgradeByUpgradeType) do
 		self.critPctWithoutRaidBuffs = self.critPctWithoutRaidBuffs - upgradeAmount
 	end
-	
+
 	return self.critPctWithoutRaidBuffs
 end
 
 function ShadowGreenLight:GetTimeToProfit(currentUpgrade)
 	local dpslog = self.dpslog
 	if dpslog.last == 0 then return "--" end
-	
+
 	-- If the data recorded is deemed sufficient (10 because it is the average time for all damages to kick in)
 	local meanDPS = 0
 	if dpslog[dpslog.last].timeStamp - self.dpslog.firstCombatEventTimeStamp >= MEAN_DPS_COMPUTATION_WINDOW_LENGTH then
@@ -643,7 +694,7 @@ function ShadowGreenLight:GetTimeToProfit(currentUpgrade)
 			if dpslog[dpslog.last].timeStamp - dpslog[i].timeStamp <= MEAN_DPS_COMPUTATION_WINDOW_LENGTH then
 				firstDataPointIndex = i
 				break
-			end 
+			end
 		end
 		-- mean DPS on window is the weighted mean of instant DPS on the window
 		local weightedSum = 0
@@ -655,12 +706,12 @@ function ShadowGreenLight:GetTimeToProfit(currentUpgrade)
 		end
 		meanDPS = weightedSum/weightSum
 	end
-	
+
 	-- Compute gcd value with haste
 	local hasteRating = GetCombatRating(CR_HASTE_SPELL)
 	local gcd = 1.5 / (1 + (hasteRating / 32.79 / 100))
 	if gcd < 1 then gcd = 1 end
-	
+
 	-- Compute dot DPS
 	local timeBetweenTicks = 3
 	-- A properly glyphed warlock will have Quick Decay
@@ -668,12 +719,12 @@ function ShadowGreenLight:GetTimeToProfit(currentUpgrade)
 		timeBetweenTicks = timeBetweenTicks/ (1 + (hasteRating / 32.79 / 100))
 	end
 	local dotDps = self.lastDotTick/timeBetweenTicks
-	
+
 	local lastDotUpgrade = self:GetLastDotUpgrade(UnitGUID("target"))
 	if not lastDotUpgrade then
 		lastDotUpgrade = 0
 	end
-	
+
 	if meanDPS == 0 or dotDps == 0 or (currentUpgrade - lastDotUpgrade == 0) then
 		self.soundAlert = false
 		return "--"
@@ -683,6 +734,51 @@ function ShadowGreenLight:GetTimeToProfit(currentUpgrade)
 		--return string.format("%.0f - %.0f - %.1f", meanDPS, log[log.last].instantDPS, log[log.last].timeStamp - log[log.first].timeStamp)
 		return string.format("%.0f'%.0f\"", math.floor(ttp / 60), ttp % 60)
 	end
+end
+
+function ShadowGreenLight:GetCritChance()
+	if self:HunterHasTier9() then
+		return GetRangedCritChance()
+	elseif self.class == "HUNTER" then
+		return 0
+	else
+		return GetSpellCritChance(6)
+	end
+end
+
+function ShadowGreenLight:HunterHasTier9()
+	if self.class ~= "HUNTER" then
+		return false
+	end
+	slots = {" Handguards", " Headpiece", " Spaulders", " Tunic", " Legguards"}
+	tiers = {" of Conquest", " of Triumph"}
+	tier = 0
+	for tier_ind=1,2,1 do
+		for slot_ind=1,5,1 do
+			if(IsEquippedItem("Windrunner's" .. slots[slot_ind] .. tiers[tier_ind])) then
+				tier = tier + 1
+			end
+		end
+	end
+	return tier >= 2
+end
+
+function ShadowGreenLight:UpgradeCanBeApplied(upgrade)
+	local targetCritBuffType = "spell"
+	if self.affectedDot == SPELL_SERPENT_STING then
+		targetCritBuffType = "physical"
+	end
+
+	if upgrade.upgradeType == "crit" then
+		if upgrade.upgradeRestriction ~= nil and upgrade.upgradeRestriction ~= targetCritBuffType then
+			return false
+		end
+
+		if self.affectedDot == SPELL_SERPENT_STING and not self:HunterHasTier9() then
+			return false
+		end
+	end
+	return true
 end
 
 function ShadowGreenLight:GetMaxUpgrade()
@@ -695,6 +791,10 @@ end
 
 function ShadowGreenLight:GetLastDotUpgrade(unitGUID)
 	return self.lastDotUpgrade[unitGUID]
+end
+
+function ShadowGreenLight:GetLastDotBaseCritPct(unitGUID)
+	return self.LastDotBaseCritPct[unitGUID]
 end
 
 function ShadowGreenLight:GetLastDotSpellPower(unitGUID)

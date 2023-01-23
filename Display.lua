@@ -130,6 +130,20 @@ Display.options = {
         end,
         order = 17,
     },
+    toggleCurrentDotPower = {
+        type = "toggle",
+        handler = Display,
+        name = "Current DoT power toggle",
+        desc = "Toggles displaying current DoT power instead of maximum upgrade in the numeric display",
+        get = function(info)
+            return Display.db.profile.currentDotPower
+        end,
+        set = function(info,v)
+            info.handler.db.profile.currentDotPower = v
+            info.handler:UpdateDisplaySettings()
+        end,
+        order = 18,
+    },
     lock = {
         type = "toggle",
         handler = Display,
@@ -142,7 +156,7 @@ Display.options = {
             info.handler.db.profile.lockFrame = v
             info.handler:UpdateDisplaySettings()
         end,
-        order = 18,
+        order = 19,
     },
     titleDesc = {
     	type = "header",
@@ -190,6 +204,7 @@ function Display:OnInitialize()
   			displayRecastIndicator = true,
   			showTooltip = true,
   			oocHiding = false,
+			currentDotPower = false,
   			border = "Blizzard Tooltip",
   			lockFrame = false,
 		}
@@ -394,7 +409,8 @@ function Display:UpdateDisplay()
 		local _, class = UnitClass("player")
 		if class == "WARLOCK" then
 			if lastDotSpellPower > GetSpellBonusDamage(6) then
-				self.frame.recastIndicator:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_7")
+				-- Don't change display based on spell power. Spell power isn't checked on Dalaran WoW.
+				self.frame.recastIndicator:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_8")
 			else
 				self.frame.recastIndicator:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_8")
 			end
@@ -420,7 +436,11 @@ function Display:UpdateDisplay()
 	   	else
 	   		self.frame.numericIndicator:SetTextColor(1,1,1,1)
 	   	end
-		self.frame.numericIndicator:SetFormattedText( "%.0f/%.0f" , currentUpgrade, ShadowGreenLight.maxUpgrade)
+		if self.db.profile.currentDotPower then
+			self.frame.numericIndicator:SetFormattedText( "%.0f/%.0f" , currentUpgrade, lastDotUpgrade)
+		else
+			self.frame.numericIndicator:SetFormattedText( "%.0f/%.0f" , currentUpgrade, ShadowGreenLight.maxUpgrade)
+		end
 	   	self.frame.numericIndicator:Show()
 	end
 end

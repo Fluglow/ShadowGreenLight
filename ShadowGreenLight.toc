@@ -1,10 +1,10 @@
-## Interface: 30000
+## Interface: 30300
 ## Title: ShadowGreenLight
-## Notes: Provides a simple display of when is the optimal cast time for SW:P considering the crit / shadowweaving bug
+## Notes: Provides a simple display that shows the most optimal time to refresh SW:P/corruption. Optimized for Dalaran WoW by Jarq.
 ## Author: Mokhtar
 ## SavedVariables: ShadowGreenLightDB, ShadowGreenLight_DefaultDisplayDB, ShadowGreenLight_DisplayBarDB
 ## OptionalDeps: LibStub, LibQTip-1.0, Ace3, LibTalentQuery-1.0, LibGroupTalents-1.0, LibBabble-Zone-3.0
-## X-Curse-Packaged-Version: v1.7.2
+## X-Curse-Packaged-Version: v1.7.3
 ## X-Curse-Project-Name: ShadowGreenLight
 ## X-Curse-Project-ID: shadowgreenlight
 ## X-Curse-Repository-ID: wow/shadowgreenlight/mainline

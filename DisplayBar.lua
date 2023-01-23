@@ -64,6 +64,20 @@ Display.options = {
         end,
         order = 14,
     },
+    toggleCurrentDotPower = {
+        type = "toggle",
+        handler = Display,
+        name = "Current DoT power toggle",
+        desc = "Toggles displaying current DoT power instead of maximum upgrade in the numeric display",
+        get = function(info)
+            return Display.db.profile.currentDotPower
+        end,
+        set = function(info,v)
+            info.handler.db.profile.currentDotPower = v
+            info.handler:UpdateDisplaySettings()
+        end,
+        order = 15,
+    },
 	titleAspect = {
 		type = "header",
 		name = "Visual aspect",
@@ -310,6 +324,7 @@ function Display:OnInitialize()
   			displayLowerBarNumericIndicator = true,
   			showTooltip = true,
   			oocHiding = false,
+			currentDotPower = false,
   			border = "Blizzard Tooltip",
   			bgColor = {0,0,0,1},
   			borderColor = {1,1,1,1},

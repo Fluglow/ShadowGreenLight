@@ -24,6 +24,11 @@ local function isPriest()
    return class == "PRIEST"
 end
 
+local function isHunter()
+   local _, class = UnitClass("player")
+   return class == "HUNTER"
+end
+
 local function hasItem(itemNumberChecked)
    for slotId=0, 19 do
       local itemLink = GetInventoryItemLink("player", slotId)
@@ -34,6 +39,24 @@ local function hasItem(itemNumberChecked)
          end 
       end
    end
+
+   -- Dalaran-WoW Nevermelting Ice Crystal behavior.
+   if itemNumberChecked ~= 50259 then
+      return false
+	end
+   
+   for bag = 0,4 do
+      for slot=1,GetContainerNumSlots(bag) do
+         local sItemLink = GetContainerItemLink(bag, slot)
+         if sItemLink then
+            local _, _, _, _, sItemNumber = string.find(sItemLink, "|?c?f?f?(%x*)|?H?([^:]*):?(%d+):?(%d*):?(%d*):?(%d*):?(%d*):?(%d*):?(%-?%d*):?(%-?%d*):?(%d*)|?h?%[?([^%[%]]*)%]?|?h?|?r?")
+            if (sItemNumber+0) == itemNumberChecked then
+               return true
+            end 
+         end
+      end
+   end
+
    return false
 end
 
@@ -66,6 +89,29 @@ ShadowGreenLight.upgradeDb = {
 		isApplicable = isPriest,
 		applicabilityArgs = {},
 	},
+	["Culling the Herd"] = {
+		name = GetSpellInfo(52858),
+		maxCount = 1,
+		upgradePerStack = 3,
+		type = "Culling the Herd",
+		detectionUnit = "player",
+		detectionType = "buff",
+		upgradeType = "dmg",
+		isApplicable = isHunter,
+		applicabilityArgs = {},
+	},
+	["Aspect of the Viper"] = {
+		name = GetSpellInfo(34074),
+		maxCount = 1,
+		upgradePerStack = -50,
+		type = "Aspect of the Viper",
+		detectionUnit = "player",
+		detectionType = "buff",
+		isBonus = false,
+		upgradeType = "dmg",
+		isApplicable = isHunter,
+		applicabilityArgs = {},
+	},
 	-------------------------------------
 	-- Talent-based upgrades
 	["Improved Scorch"] = {
@@ -77,6 +123,7 @@ ShadowGreenLight.upgradeDb = {
 		detectionUnit = "target",
 		detectionType = "debuff",
 		upgradeType = "crit",
+		upgradeRestriction = "spell",
 	},
 	["Improved Shadow Bolt"] = {
 		name = GetSpellInfo(18275),
@@ -93,6 +140,7 @@ ShadowGreenLight.upgradeDb = {
 		detectionUnit = "target",
 		detectionType = "debuff",
 		upgradeType = "crit",
+		upgradeRestriction = "spell",
 	},
 	["Winter's Chill"] = {
 		name = GetSpellInfo(11180),
@@ -103,6 +151,7 @@ ShadowGreenLight.upgradeDb = {
 		detectionUnit = "target",
 		detectionType = "debuff",
 		upgradeType = "crit",
+		upgradeRestriction = "spell",
 	},
 	["Totem of Wrath"] = {
 		name = GetSpellInfo(57722),
@@ -153,6 +202,7 @@ ShadowGreenLight.upgradeDb = {
 		detectionUnit = "player",
 		detectionType = "buff",
 		upgradeType = "crit",
+		upgradeRestriction = "spell",
 	},
 	["Elemental Oath"] = {
 		name = GetSpellInfo(51470),
@@ -166,6 +216,29 @@ ShadowGreenLight.upgradeDb = {
 		detectionUnit = "player",
 		detectionType = "buff",
 		upgradeType = "crit",
+		upgradeRestriction = "spell",
+	},
+	["Leader of the Pack"] = {
+		name = GetSpellInfo(24932),
+		talentName = GetSpellInfo(24932),
+		maxCount = 1,
+		upgradePerStack = 5,
+		type = "Physical Critical Strike Chance Buff",
+		detectionUnit = "player",
+		detectionType = "buff",
+		upgradeType = "crit",
+		upgradeRestriction = "physical",
+	},
+	["Rampage"] = {
+		name = GetSpellInfo(29801),
+		talentName = GetSpellInfo(29801),
+		maxCount = 1,
+		upgradePerStack = 5,
+		type = "Physical Critical Strike Chance Buff",
+		detectionUnit = "player",
+		detectionType = "buff",
+		upgradeType = "crit",
+		upgradeRestriction = "physical",
 	},
 	["Arcane Empowerment"] = {
 		name = GetSpellInfo(31579),
@@ -331,7 +404,7 @@ ShadowGreenLight.upgradeDb = {
 		isBonus = true,
 		upgradeType = "dmg",
 		isApplicable = isInZone,
-		applicabilityArgs = {BZ["Icecrown Citadel"]},
+		applicabilityArgs = {BZ["Ulduar"]},
 	},
 	-- Trial of the Crusader
 	["Empowered Light"] = {
@@ -371,6 +444,18 @@ ShadowGreenLight.upgradeDb = {
 		isApplicable = isInZone,
 		applicabilityArgs = {BZ["Icecrown Citadel"]},
 	},
+	["Gastric Bloat"] = {
+		name = GetSpellInfo(72551),
+		upgradePerStack = 10,
+		maxCount = 9,
+		type = "Encounter Specific - Festergut",
+		detectionUnit = "player",
+		detectionType = "debuff",
+		isBonus = true,
+		upgradeType = "dmg",
+		isApplicable = isInZone,
+		applicabilityArgs = {BZ["Icecrown Citadel"]},
+	},
 	-------------------------------------
 	-- Gear-specific upgrade
 	["Nevermelting Ice Crystal"] = {
@@ -394,6 +479,17 @@ ShadowGreenLight.upgradeDb = {
 		upgradeType = "dmg",
 		isApplicable = hasSetBonus,
 		applicabilityArgs = {4, {51230, 51231, 51232, 51233, 51234, 51205, 51206, 51207, 51208, 51209, 50240, 50241, 50242, 50243, 50244}},
+	},
+	["Exploit Weakness"] = { -- Hunter t10 proc
+		name = GetSpellInfo(70728),
+		maxCount = 1,
+		upgradePerStack = 15,
+		type = "Hunter 2T10 set bonus",
+		detectionUnit = "player",
+		detectionType = "buff",
+		upgradeType = "dmg",
+		isApplicable = hasSetBonus,
+		applicabilityArgs = {2, {50114, 50115, 50116, 50117, 50118, 51150, 51151, 51152, 51153, 51154, 51285, 51286, 51287, 51288, 51289}},
 	},
 	-----------------------------
 	-- Test purposes
