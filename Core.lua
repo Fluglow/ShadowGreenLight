@@ -320,7 +320,7 @@ function ShadowGreenLight:handleCombatLogEvent(event, timeStamp, eventType, srcG
 			if spellName == self.affectedDot then
 				self.lastDotTick = dmg + resisted + blocked + absorbed
 				if critical then
-					self.lastDotTick = self.lastDotTick / 2
+					self.lastDotTick = self.lastDotTick / 1.5
 				end
 				self.lastDotTick = self.lastDotTick * (1+self:GetCritChance()/100)
 			end
