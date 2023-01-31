@@ -322,7 +322,7 @@ function ShadowGreenLight:handleCombatLogEvent(event, timeStamp, eventType, srcG
 				if critical then
 					self.lastDotTick = self.lastDotTick / 1.5
 				end
-				self.lastDotTick = self.lastDotTick * (1+self:GetCritChance()/100)
+				self.lastDotTick = self.lastDotTick * (1 + 1.5 * self:GetCritChance() / 100)
 			end
 	    end
 		if suffix == "AURA" and special == "REMOVED" then
